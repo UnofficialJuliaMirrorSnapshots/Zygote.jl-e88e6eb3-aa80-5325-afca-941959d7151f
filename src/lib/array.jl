@@ -1,4 +1,4 @@
-@adjoint (::Type{T})(args...) where T<:Array = T(args...), Δ -> nothing
+@adjoint (::Type{T})(::UndefInitializer, args...) where T<:Array = T(undef, args...), Δ -> nothing
 
 @nograd size, length, eachindex, Colon(), findfirst, randn, ones, zeros, one, zero,
   print, println
@@ -7,6 +7,8 @@
 @adjoint Base.vect(xs...) = Base.vect(xs...), Δ -> (Δ...,)
 
 @adjoint copy(x::AbstractArray) = copy(x), ȳ -> (ȳ,)
+
+@adjoint (::Type{T})(x::T) where T<:Array = T(x), ȳ -> (ȳ,)
 
 _zero(xs::AbstractArray{<:Integer}) = fill!(similar(xs, float(eltype(xs))), false)
 _zero(xs::AbstractArray{<:Number}) = zero(xs)
@@ -257,6 +259,15 @@ end
       Σ̄[n] /= 2
     end
     return (UpperTriangular(Σ̄),)
+  end
+end
+
+Zygote.@adjoint function LinearAlgebra.tr(x::AbstractMatrix)
+  # x is a squre matrix checked by tr,
+  # so we could just use Eye(size(x, 1))
+  # to create a Diagonal
+  tr(x), function (Δ::Number)
+    (Diagonal(FillArray(Δ, (size(x, 1), ))), )
   end
 end
 
