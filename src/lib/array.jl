@@ -126,6 +126,11 @@ end
   end
 end
 
+function _forward(cx::Context, ::typeof(prod), f, xs::AbstractArray)
+  y, back = forward(cx, (xs -> prod(f.(xs))), xs)
+  y, ȳ -> (nothing, nothing, back(ȳ)...)
+end
+
 @adjoint function maximum(xs; dims = :)
   max, i = findmax(xs, dims = dims)
   max, function (Δ)
@@ -156,7 +161,7 @@ _backmean(xs, Δ, dims) = zero(xs) .+ Δ ./ mapreduce(i -> size(xs,i),*,dims)
 
 @adjoint function(a::AbstractVecOrMat * b::AbstractVecOrMat)
   return a * b, function(Δ)
-    return (reshape(Δ * transpose(b), size(a)), reshape(transpose(a) * Δ, size(b)))
+    return (reshape(Δ * b', size(a)), reshape(a' * Δ, size(b)))
   end
 end
 
