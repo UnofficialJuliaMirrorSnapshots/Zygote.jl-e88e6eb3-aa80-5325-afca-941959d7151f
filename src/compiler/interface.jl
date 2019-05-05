@@ -84,7 +84,12 @@ end
 
 Base.show(io::IO, ps::Grads) = print(io, "Grads(...)")
 
-@forward Grads.grads Base.setindex!, Base.getindex, Base.haskey
+@forward Grads.grads Base.getindex, Base.haskey
+
+function Base.getindex(gs::Grads, x)
+  isbits(x) && error("Only reference types can be differentiated with `Params`.")
+  return gs.grads[x]
+end
 
 function forward(f, ps::Params)
   cx = Context()
@@ -96,4 +101,29 @@ function forward(f, ps::Params)
     back(Δ)
     Grads(cx.cache) # TODO make a copy
   end
+end
+
+# Code Reflection
+
+using InteractiveUtils
+using InteractiveUtils: typesof
+using Core: Typeof
+
+function code_ir(f, T)
+  m = meta(Tuple{Typeof(f),T.parameters...})
+  return IR(m)
+end
+
+function code_irm(ex)
+  isexpr(ex, :call) || error("@code_ir f(args...)")
+  f, args = ex.args[1], ex.args[2:end]
+  :(code_ir($(esc(f)), typesof($(esc.(args)...))))
+end
+
+macro code_ir(ex)
+  code_irm(ex)
+end
+
+macro code_adjoint(ex)
+  :(Adjoint($(code_irm(ex)), varargs = varargs($(esc(:($InteractiveUtils.@which $ex))), length(($(esc.(ex.args)...),)))))
 end

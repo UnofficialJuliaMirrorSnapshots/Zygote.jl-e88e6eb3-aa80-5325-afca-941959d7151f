@@ -213,6 +213,11 @@ end
   end
 end
 
+function _forward(cx::Context, ::typeof(norm), x::AbstractArray, p::Real = 2)
+  fallback = (x, p) -> sum(abs.(x).^p .+ eps(0f0))^(1/p) # avoid d(sqrt(x))/dx == Inf at 0
+  _forward(cx, fallback, x, p)
+end
+
 # LinAlg Matrix Types
 # ===================
 
@@ -265,6 +270,29 @@ end
     end
     return (UpperTriangular(Σ̄),)
   end
+end
+
+@adjoint function lyap(A::AbstractMatrix, C::AbstractMatrix)
+  X = lyap(A, C)
+  return X, function (X̄)
+    C̄ = lyap(collect(A'), X̄)
+    Ā = C̄*X' + C̄'*X
+    return (Ā, C̄)
+  end
+end
+
+# Adjoint based on the Theano implementation, which uses the differential as described
+# in Brančík, "Matlab programs for matrix exponential function derivative evaluation"
+@adjoint exp(A::AbstractMatrix) = exp(A), function(F̄)
+  n = size(A, 1)
+  E = eigen(A)
+  w = E.values
+  ew = exp.(w)
+  X = [i==j ? ew[i] : (ew[i]-ew[j])/(w[i]-w[j]) for i in 1:n,j=1:n]
+  VT = transpose(E.vectors)
+  VTF = factorize(collect(VT))
+  Ā = real.(VTF\(VT*F̄/VTF.*X)*VT)
+  (Ā, )
 end
 
 Zygote.@adjoint function LinearAlgebra.tr(x::AbstractMatrix)
