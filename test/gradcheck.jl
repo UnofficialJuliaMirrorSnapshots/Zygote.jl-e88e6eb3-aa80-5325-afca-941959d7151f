@@ -1,4 +1,4 @@
-using Zygote, NNlib, Test, Random, LinearAlgebra, Statistics
+using Zygote, NNlib, Test, Random, LinearAlgebra, Statistics, FillArrays
 using Zygote: gradient
 using NNlib: conv, ∇conv_data, depthwiseconv
 
@@ -439,4 +439,19 @@ using Zygote: Buffer
   buf[1] = 1
   copy(buf)
   @test_throws ErrorException buf[1] = 1
+  @test eltype(buf) === Int
+  @test length(buf) === 3
+  @test ndims(buf) === 1
+  @test size(buf) === (3, )
+  @test size(buf, 2) === 1
+  @test axes(buf) == (1:3, )
+  @test axes(buf, 2) == 1:1
+  @test eachindex(buf) == 1:3
+  @test stride(buf, 2) === 3
+  @test strides(buf) === (1, )
 end
+
+@testset "FillArrays" begin
+  gradcheck(x->sum(Fill(x[], (2, 2))), [0.1])
+end
+
