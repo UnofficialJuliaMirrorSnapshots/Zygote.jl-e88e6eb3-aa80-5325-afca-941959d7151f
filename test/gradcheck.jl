@@ -54,6 +54,9 @@ Random.seed!(0)
 @test gradtest(logdet, map(x -> x*x', (rand(4, 4),))[1])
 @test gradtest(x -> logabsdet(x)[1], (4, 4))
 
+@test gradtest(x -> view(x,:,2,:), (3,4,5))
+@test gradtest(x -> view(x,1:2,3:4), (3,4))
+
 @testset "conv" begin
   for spatial_rank in (1, 2, 3)
     x = rand(repeat([10], spatial_rank)..., 3, 2)
@@ -76,7 +79,9 @@ end
   end
 end
 
+@test gradtest(x -> permutedims(x), rand(2,3))
 @test gradtest(x -> permutedims(x, [3,1,2]), rand(4,5,6))
+@test gradtest(x -> PermutedDimsArray(x, (3,1,2)), rand(4,5,6))
 
 @test gradtest(x -> repeat(x; inner=2), rand(5))
 @test gradtest(x -> repeat(x; inner=2, outer=3), rand(5))
@@ -269,10 +274,15 @@ end
 end
 
 @testset "cholesky" begin
-  rng, N = MersenneTwister(123456), 5
-  A = randn(rng, N, N)
-  @test gradtest(A->logdet(cholesky(A' * A + 1e-6I)), A)
+  @testset "cholesky - dense" begin
+    rng, N = MersenneTwister(123456), 5
+    A = randn(rng, N, N)
+    @test cholesky(A' * A + I) == first(Zygote.forward(A->cholesky(A' * A + I), A))
+    @test gradtest(A->cholesky(A' * A + I).U, A)
+    @test gradtest(A->logdet(cholesky(A' * A + I)), A)
+  end
   @testset "cholesky - scalar" begin
+    rng = MersenneTwister(123456)
     y, back = Zygote.forward(cholesky, 5.0 * ones(1, 1))
     y′, back′ = Zygote.forward(cholesky, 5.0)
     C̄ = randn(rng, 1, 1)
@@ -280,11 +290,12 @@ end
     @test back′((factors=C̄,))[1] ≈ back((factors=C̄,))[1][1, 1]
   end
   @testset "cholesky - Diagonal" begin
-    D = Diagonal(exp.(randn(3)))
+    rng, N = MersenneTwister(123456), 3
+    D = Diagonal(exp.(randn(rng, N)))
     Dmat = Matrix(D)
     y, back = Zygote.forward(cholesky, Dmat)
     y′, back′ = Zygote.forward(cholesky, D)
-    C̄ = (factors=randn(rng, 3, 3),)
+    C̄ = (factors=randn(rng, N, N),)
     @test back′(C̄)[1] isa Diagonal
     @test diag(back′(C̄)[1]) ≈ diag(back(C̄)[1])
   end

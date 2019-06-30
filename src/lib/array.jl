@@ -33,14 +33,27 @@ end
 @adjoint! setindex!(xs::AbstractArray, x...) = setindex!(xs, x...),
   _ -> error("Mutating arrays is not supported")
 
+@adjoint function view(x::AbstractArray, inds...; kw...)
+  view(x, inds...; kw...), dy -> begin
+    dx = _zero(x)
+    copyto!(view(dx, inds...; kw...), dy)
+    (dx, map(_->nothing, inds)...)
+  end
+end
+
 # General
 
 @adjoint collect(x::Array) = collect(x), Δ -> (Δ,)
 
 @adjoint fill(x::Real, dims...) = fill(x, dims...), Δ->(sum(Δ), map(_->nothing, dims)...)
 
+@adjoint permutedims(xs) = permutedims(xs), Δ -> (permutedims(Δ),)
+
 @adjoint permutedims(xs, dims) = permutedims(xs, dims),
   Δ -> (permutedims(Δ, invperm(dims)), nothing)
+
+@adjoint PermutedDimsArray(xs, dims) = PermutedDimsArray(xs, dims),
+  Δ -> (PermutedDimsArray(Δ, invperm(dims)), nothing)
 
 @adjoint reshape(xs, dims...) = reshape(xs, dims...),
   Δ -> (reshape(Δ, size(xs)),map(_->nothing,dims)...)
@@ -317,10 +330,8 @@ end
     Σ̄ = copytri!(Σ̄, 'U')
     Σ̄ = ldiv!(U, Σ̄)
     BLAS.trsm!('R', 'U', 'T', 'N', one(eltype(Σ)), U.data, Σ̄)
-    @inbounds for n in diagind(Σ̄)
-      Σ̄[n] /= 2
-    end
-    return (UpperTriangular(Σ̄),)
+    Σ̄ ./= 2
+    return (Σ̄,)
   end
 end
 
