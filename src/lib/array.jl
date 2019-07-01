@@ -4,6 +4,8 @@ using Base.Broadcast: broadcasted, broadcast_shape
 
 @adjoint (::Type{T})(::UndefInitializer, args...) where T<:Array = T(undef, args...), Δ -> nothing
 
+@adjoint Array(xs::AbstractArray) = Array(xs), ȳ -> (ȳ,)
+
 @nograd size, length, eachindex, Colon(), findfirst, randn, ones, zeros, one, zero,
   print, println
 
@@ -48,6 +50,8 @@ end
 @adjoint fill(x::Real, dims...) = fill(x, dims...), Δ->(sum(Δ), map(_->nothing, dims)...)
 
 @adjoint permutedims(xs) = permutedims(xs), Δ -> (permutedims(Δ),)
+
+@adjoint permutedims(xs::AbstractVector) = permutedims(xs), Δ -> (vec(permutedims(Δ)),)
 
 @adjoint permutedims(xs, dims) = permutedims(xs, dims),
   Δ -> (permutedims(Δ, invperm(dims)), nothing)
@@ -100,21 +104,29 @@ function unzip(tuples)
       map(tuple -> tuple[i], tuples)
   end
 end
-@adjoint function map(f, args::AbstractArray...)
-  ys_and_backs = map((args...) -> _forward(__context__, f, args...), args...)
-  ys, backs = unzip(ys_and_backs)
-  ys, function (Δ)
-    Δf_and_args_zipped = map((f, δ) -> f(δ), backs, Δ)
-    Δf_and_args = unzip(Δf_and_args_zipped)
-    Δf = reduce(accum, Δf_and_args[1])
-    (Δf, Δf_and_args[2:end]...)
+function ∇map(cx, f, args...)
+  ys_and_backs = map((args...) -> _forward(cx, f, args...), args...)
+  if isempty(ys_and_backs)
+    ys_and_backs, _ -> nothing
+  else
+    ys, backs = unzip(ys_and_backs)
+    ys, function (Δ)
+      Δf_and_args_zipped = map((f, δ) -> f(δ), backs, Δ)
+      Δf_and_args = unzip(Δf_and_args_zipped)
+      Δf = reduce(accum, Δf_and_args[1])
+      (Δf, Δf_and_args[2:end]...)
+    end
   end
 end
 
+@adjoint function map(f, args::Union{AbstractArray,Tuple}...)
+  ∇map(__context__, f, args...)
+end
+
 function _forward(cx::Context, ::typeof(collect), g::Base.Generator)
-  y, back = _forward(cx, map, g.f, g.iter)
+  y, back = ∇map(cx, g.f, g.iter)
   y, function (ȳ)
-    _, f̄, x̄ = back(ȳ)
+    f̄, x̄ = back(ȳ)
     (nothing, (f = f̄, iter = x̄),)
   end
 end
@@ -140,7 +152,7 @@ end
   return sum(abs2, X; dims=dims), Δ::Union{Number, AbstractArray}->(nothing, ((2Δ) .* X))
 end
 
-@adjoint function prod(xs; dims = :)
+@adjoint function prod(xs::AbstractArray{<:Number}; dims = :)
   if dims === (:)
     prod(xs), Δ -> (prod(xs) ./ xs .* Δ,)
   else
@@ -182,10 +194,22 @@ _backmean(xs, Δ, dims) = zero(xs) .+ Δ ./ mapreduce(i -> size(xs,i),*,dims)
 # LinAlg
 # ======
 
-@adjoint function(a::AbstractVecOrMat * b::AbstractVecOrMat)
-  return a * b, function(Δ)
-    return (reshape(Δ * b', size(a)), reshape(a' * Δ, size(b)))
-  end
+@adjoint function(A::AbstractMatrix * B::AbstractMatrix)
+  return A * B, Δ::AbstractMatrix->(Δ * B', A' * Δ)
+end
+
+@adjoint function(A::AbstractMatrix * x::AbstractVector)
+  return A * x, Δ::AbstractVector->(Δ * x', A' * Δ)
+end
+
+@adjoint function *(x::Union{Transpose{<:Any, <:AbstractVector},
+                             LinearAlgebra.Adjoint{<:Any, <:AbstractVector}},
+                    y::AbstractVector)
+  return x * y, Δ->(Δ * y', x' * Δ)
+end
+
+@adjoint function(a::AbstractVector * x::AbstractMatrix)
+  return a * x, Δ::AbstractMatrix->(vec(Δ * x'), a' * Δ)
 end
 
 @adjoint function transpose(x)
@@ -257,7 +281,7 @@ end
   return Y, function(Ȳ)
     B̄ = A' \ Ȳ
     return (-B̄ * Y', B̄)
-  end 
+  end
 end
 
 @adjoint function /(A::AbstractMatrix, B::Union{Diagonal, AbstractTriangular})
