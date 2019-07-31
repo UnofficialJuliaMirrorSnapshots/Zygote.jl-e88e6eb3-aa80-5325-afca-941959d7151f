@@ -7,7 +7,7 @@ using Base.Broadcast: broadcasted, broadcast_shape
 @adjoint Array(xs::AbstractArray) = Array(xs), ȳ -> (ȳ,)
 
 @nograd size, length, eachindex, Colon(), findfirst, randn, ones, zeros, one, zero,
-  print, println
+  print, println, any, all
 
 
 @adjoint Base.vect(xs...) = Base.vect(xs...), Δ -> (Δ...,)
@@ -354,8 +354,10 @@ end
     Σ̄ = copytri!(Σ̄, 'U')
     Σ̄ = ldiv!(U, Σ̄)
     BLAS.trsm!('R', 'U', 'T', 'N', one(eltype(Σ)), U.data, Σ̄)
-    Σ̄ ./= 2
-    return (Σ̄,)
+    @inbounds for n in diagind(Σ̄)
+      Σ̄[n] /= 2
+    end
+    return (UpperTriangular(Σ̄),)
   end
 end
 
