@@ -9,6 +9,7 @@ using Base.Broadcast: broadcasted, broadcast_shape
 @nograd size, length, eachindex, Colon(), findfirst, randn, ones, zeros, one, zero,
   print, println, any, all
 
+@adjoint rand(dims::Integer...) = rand(dims...), _ -> nothing
 
 @adjoint Base.vect(xs...) = Base.vect(xs...), Δ -> (Δ...,)
 
@@ -185,6 +186,10 @@ end
   end
 end
 
+@adjoint function dropdims(xs::AbstractArray; dims)
+  dropdims(xs, dims = dims), Δ -> (reshape(Δ, size(xs)...),)
+end
+
 @adjoint function mean(xs::AbstractArray; dims = :)
   return mean(xs, dims=dims), Δ -> (_backmean(xs,Δ,dims),)
 end
@@ -276,7 +281,16 @@ end
   return Y, Δ->(-Y' * Δ * Y' + (I - A * Y) * Δ' * Y * Y' + Y' * Y * Δ' * (I - Y * A),)
 end
 
-@adjoint function \(A::Union{Diagonal, AbstractTriangular}, B::AbstractVecOrMat)
+# When `A` is guaranteed to be square, definitely use the simple expression for the adjoint.
+@adjoint function \(
+  A::Union{
+    Diagonal,
+    AbstractTriangular,
+    LinearAlgebra.Adjoint{<:Any, <:AbstractTriangular},
+    Transpose{<:Any, <:AbstractTriangular},
+  },
+  B::AbstractVecOrMat,
+)
   Y = A \ B
   return Y, function(Ȳ)
     B̄ = A' \ Ȳ

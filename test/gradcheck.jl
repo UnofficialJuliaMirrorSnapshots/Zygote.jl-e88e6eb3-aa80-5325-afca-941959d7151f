@@ -157,6 +157,12 @@ end
   @test gradtest(x -> minimum(x, dims=[1, 2]), rand(2, 3, 4))
 end
 
+@testset "dropdims" begin
+  @test gradtest(x -> dropdims(x, dims = 3), rand(2, 2, 1, 2))
+  @test gradtest(x -> dropdims(x, dims = (2, 3)), rand(2, 1, 1, 3))
+  @test gradtest(x -> dropdims(x, dims = (1, 2, 3)), rand(1, 1, 1, 3))
+end
+
 @testset "(p)inv" begin
   rng, P, Q = MersenneTwister(123456), 13, 11
   A, B, C = randn(rng, P, Q), randn(rng, P, P), randn(Q, P)
@@ -449,6 +455,11 @@ end
   @test Zygote.gradient(x->sum(one(x)), randn(3, 3))[1] isa Nothing
   @test Zygote.gradient(x->sum(zeros(size(x))), randn(7))[1] isa Nothing
   @test Zygote.gradient(x->sum(zero(x)), randn(3))[1] isa Nothing
+end
+
+@testset "fma and muladd" begin
+    @test gradcheck(x -> fma(x[1], x[2], x[3]), [2.0, 3.0, 5.0])
+    @test gradcheck(x -> muladd(x[1], x[2], x[3]), [2.0, 3.0, 5.0])
 end
 
 import StatsFuns
