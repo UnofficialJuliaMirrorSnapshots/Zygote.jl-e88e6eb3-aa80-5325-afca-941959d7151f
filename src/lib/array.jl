@@ -202,6 +202,19 @@ end
 _backmean(xs, Δ, ::Colon) = zero(xs) .+ Δ ./ length(xs)
 _backmean(xs, Δ, dims) = zero(xs) .+ Δ ./ mapreduce(i -> size(xs,i),*,dims)
 
+@adjoint function Statistics.var(xs::AbstractArray; corrected::Bool=true, dims=:, mean=mean(xs, dims=dims))
+    return Statistics.var(xs; corrected=corrected, mean=mean, dims=dims), Δ -> _backvar(xs, Δ, corrected, mean, dims)
+end
+_backvar(xs, Δ, corrected::Bool, mean, dims)         = _backvar(xs, Δ, mapreduce(i -> size(xs,i),*,dims) - corrected, mean)
+_backvar(xs, Δ, corrected::Bool, mean, ::Colon)      = _backvar(xs, Δ, length(xs) - corrected, mean)
+_backvar(xs, Δ, N::Int, mean) = (convert(eltype(xs), 2/N) .* Δ .* (xs .- mean),)
+
+@adjoint function Statistics.std(xs::AbstractArray; corrected::Bool=true, dims=:, mean=mean(xs, dims=dims))
+    s = Statistics.std(xs; corrected=corrected, mean=mean, dims=dims)
+    return s, Δ -> _backvar(xs, Δ ./ (2 .* s), corrected, mean, dims)
+end
+
+
 # LinAlg
 # ======
 
@@ -347,12 +360,43 @@ end
   end
 end
 
-_symmetric_back(Δ) = UpperTriangular(Δ) + LowerTriangular(Δ)' - Diagonal(Δ)
-_symmetric_back(Δ::Union{Diagonal, UpperTriangular}) = Δ
-@adjoint function Symmetric(A::AbstractMatrix)
-  back(Δ::AbstractMatrix) = (_symmetric_back(Δ),)
-  back(Δ::NamedTuple) = (_symmetric_back(Δ.data),)
-  return Symmetric(A), back
+function _symmetric_back(Δ, uplo)
+  L, U, D = LowerTriangular(Δ), UpperTriangular(Δ), Diagonal(Δ)
+  return uplo == 'U' ? U .+ transpose(L) - D : L .+ transpose(U) - D
+end
+_symmetric_back(Δ::Diagonal, uplo) = Δ
+_symmetric_back(Δ::UpperTriangular, uplo) = collect(uplo == 'U' ? Δ : transpose(Δ))
+_symmetric_back(Δ::LowerTriangular, uplo) = collect(uplo == 'U' ? transpose(Δ) : Δ)
+
+@adjoint function Symmetric(A::AbstractMatrix, uplo=:U)
+  S = Symmetric(A, uplo)
+  back(Δ::AbstractMatrix) = (_symmetric_back(Δ, S.uplo), nothing)
+  back(Δ::NamedTuple) = (_symmetric_back(Δ.data, S.uplo), nothing)
+  return S, back
+end
+
+_extract_imag(x) = (x->complex(0, imag(x))).(x)
+function _hermitian_back(Δ, uplo)
+  isreal(Δ) && return _symmetric_back(Δ, uplo)
+  L, U, rD = LowerTriangular(Δ), UpperTriangular(Δ), real.(Diagonal(Δ))
+  return uplo == 'U' ? U .+ L' - rD : L .+ U' - rD
+end
+_hermitian_back(Δ::Diagonal, uplo) = real.(Δ)
+function _hermitian_back(Δ::LinearAlgebra.AbstractTriangular, uplo)
+  isreal(Δ) && return _symmetric_back(Δ, uplo)
+  ŪL̄ = Δ .- Diagonal(_extract_imag(diag(Δ)))
+  if istriu(Δ)
+    return collect(uplo == 'U' ? ŪL̄ : ŪL̄')
+  else
+    return collect(uplo == 'U' ? ŪL̄' : ŪL̄)
+  end
+end
+
+@adjoint function LinearAlgebra.Hermitian(A::AbstractMatrix, uplo=:U)
+  H = Hermitian(A, uplo)
+  back(Δ::AbstractMatrix) = (_hermitian_back(Δ, H.uplo), nothing)
+  back(Δ::NamedTuple) = (_hermitian_back(Δ.data, H.uplo), nothing)
+  return H, back
 end
 
 @adjoint function cholesky(Σ::Real)
@@ -398,10 +442,10 @@ end
   w = E.values
   ew = exp.(w)
   X = [i==j ? ew[i] : (ew[i]-ew[j])/(w[i]-w[j]) for i in 1:n,j=1:n]
-  VT = transpose(E.vectors)
-  VTF = factorize(collect(VT))
-  Ā = real.(VTF\(VT*F̄/VTF.*X)*VT)
-  (Ā, )
+  V = E.vectors
+  VF = factorize(V)
+  Ā = (V * ((VF \ F̄' * V) .* X) / VF)'
+  return (Ā,)
 end
 
 Zygote.@adjoint function LinearAlgebra.tr(x::AbstractMatrix)
