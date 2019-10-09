@@ -127,7 +127,7 @@ end
 
 unapply(t, xs) = _unapply(t, xs)[1]
 
-@adjoint function Core._apply(f, args...)
+@adjoint! function Core._apply(f, args...)
   y, back = Core._apply(_pullback, (__context__, f), args...)
   st = map(_empty, args)
   y, function (Δ)
@@ -150,8 +150,6 @@ end
 @generated nt_nothing(x) = Expr(:tuple, [:($f=nothing) for f in fieldnames(x)]...)
 
 @generated pair(::Val{k}, v) where k = :($k = v,)
-
-literal_getproperty(x, ::Val{f}) where f = getproperty(x, f)
 
 @adjoint function literal_getproperty(x, ::Val{f}) where f
   val = getproperty(x, f)

@@ -121,7 +121,7 @@ end
     bar = (x) -> x*y
     sum(map(bar, 1:5))
   end
-  Zygote.usetyped || @test gradtest(foo, 3) #TODO
+  @test gradtest(foo, 3)
   @test gradient(v -> sum([x for x in v]), [1.1,2.2,3.3]) == ([1, 1, 1],)
 end
 
@@ -215,6 +215,21 @@ end
   @test gradtest(x -> dropdims(x, dims = 3), rand(2, 2, 1, 2))
   @test gradtest(x -> dropdims(x, dims = (2, 3)), rand(2, 1, 1, 3))
   @test gradtest(x -> dropdims(x, dims = (1, 2, 3)), rand(1, 1, 1, 3))
+end
+
+@testset "$f(::AbstractArray)" for f in (real, conj, imag)
+  rng, N = MersenneTwister(123456), 3
+  Ts = (Float64, ComplexF64)
+  @testset "$f(::Array{$IT})" for IT in Ts
+    A = randn(IT, N, N)
+    y, back = Zygote.pullback(f, A)
+    y2, back2 = Zygote.pullback(x->f.(x), A)
+    @test y == y2
+    @testset "back(::Array{$BT})" for BT in Ts
+      ȳ = randn(BT, N, N)
+      @test back(ȳ)[1] == back2(ȳ)[1]
+    end
+  end
 end
 
 @testset "(p)inv" begin
@@ -512,6 +527,99 @@ end
   end
 end
 
+@testset "eigen(::RealHermSymComplexHerm)" begin
+  @testset "eigen(::Symmetric{<:Real})" begin
+    rng, N = MersenneTwister(123), 7
+    A = Symmetric(randn(rng, N, N))
+    @test gradtest(collect(A)) do (x)
+      d, Q = eigen(Symmetric(x))
+      return Q * Diagonal(exp.(d)) * transpose(Q)
+    end
+    y = Zygote.pullback(eigen, A)[1]
+    y2 = eigen(A)
+    @test y.values ≈ y2.values
+    @test y.vectors ≈ y2.vectors
+    @testset "low rank" begin
+      U = eigvecs(A)
+      A2 = Symmetric(U * Diagonal([randn(rng), zeros(N-1)...]) * U')
+      @test_broken gradtest(collect(A2)) do (x)
+        d, Q = eigen(Symmetric(x))
+        return Q * Diagonal(exp.(d)) * transpose(Q)
+      end
+    end
+  end
+
+  @testset "eigen(::Hermitian{<:Real})" begin
+    rng, N = MersenneTwister(456), 7
+    A = Hermitian(randn(rng, N, N))
+    @test gradtest(collect(A)) do (x)
+      d, Q = eigen(Hermitian(x))
+      return Q * Diagonal(exp.(d)) * transpose(Q)
+    end
+    y = Zygote.pullback(eigen, A)[1]
+    y2 = eigen(A)
+    @test y.values ≈ y2.values
+    @test y.vectors ≈ y2.vectors
+    @testset "low rank" begin
+      U = eigvecs(A)
+      A2 = Hermitian(U * Diagonal([randn(rng), zeros(N-1)...]) * U')
+      @test_broken gradtest(collect(A2)) do (x)
+        d, Q = eigen(Hermitian(x))
+        return Q * Diagonal(exp.(d)) * transpose(Q)
+      end
+    end
+  end
+
+  @testset "eigen(::Hermitian{<:Complex})" begin
+    rng, N = MersenneTwister(789), 7
+    A = Hermitian(randn(rng, ComplexF64, N, N))
+    @test gradtest(reim(collect(A))...) do a,b
+      d, U = eigen(Hermitian(complex.(a, b)))
+      X = U * Diagonal(exp.(d)) * U'
+      return real.(X) .+ imag.(X)
+    end
+    y = Zygote.pullback(eigen, A)[1]
+    y2 = eigen(A)
+    @test y.values ≈ y2.values
+    @test y.vectors ≈ y2.vectors
+    @testset "low rank" begin
+      U = eigvecs(A)
+      A2 = Hermitian(U * Diagonal([randn(rng), zeros(N-1)...]) * U')
+      @test_broken gradtest(reim(collect(A2))...) do a,b
+        d, U = eigen(Hermitian(complex.(a, b)))
+        X = U * Diagonal(exp.(d)) * U'
+        return real.(X) .+ imag.(X)
+      end
+    end
+  end
+end
+
+@testset "eigvals(::RealHermSymComplexHerm)" begin
+  @testset "eigvals(::Symmetric{<:Real})" begin
+    rng, N = MersenneTwister(123), 7
+    A = Symmetric(randn(rng, N, N))
+    @test gradtest(x->eigvals(Symmetric(x)), collect(A))
+    @test Zygote.pullback(eigvals, A)[1] ≈ eigvals(A)
+  end
+
+  @testset "eigvals(::Hermitian{<:Real})" begin
+    rng, N = MersenneTwister(456), 7
+    A = Hermitian(randn(rng, N, N))
+    @test gradtest(x->eigvals(Hermitian(x)), collect(A))
+    @test Zygote.pullback(eigvals, A)[1] ≈ eigvals(A)
+  end
+
+  @testset "eigvals(::Hermitian{<:Complex})" begin
+    rng, N = MersenneTwister(789), 7
+    A, B = randn(rng, N, N), randn(rng, N, N)
+    @test gradtest(A, B) do a,b
+      c = Hermitian(complex.(a, b))
+      return eigvals(c)
+    end
+    @test Zygote.pullback(eigvals, Hermitian(A))[1] ≈ eigvals(Hermitian(A))
+  end
+end
+
 using Distances
 
 Zygote.refresh()
@@ -711,9 +819,7 @@ end
 end
 
 @testset "broadcast" begin
-  if !Zygote.usetyped
-    @test gradient(x -> sum(sin.(x)), Diagonal(randn(3)))[1][2] == 1
-  end
+  @test gradient(x -> sum(sin.(x)), Diagonal(randn(3)))[1][2] == 1
 end
 
 using Zygote: Buffer
@@ -749,6 +855,12 @@ using Zygote: Buffer
   @test eachindex(buf) == 1:3
   @test stride(buf, 2) === 3
   @test strides(buf) === (1, )
+
+  @test gradient([1, 2, 3]) do xs
+    b = Zygote.Buffer(xs)
+    b .= xs .* 2
+    return sum(copy(b))
+  end == ([2,2,2],)
 end
 
 @testset "FillArrays" begin

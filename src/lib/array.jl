@@ -196,6 +196,10 @@ end
   dropdims(xs, dims = dims), Δ -> (reshape(Δ, size(xs)...),)
 end
 
+@adjoint real(x::AbstractArray) = real(x), r̄ -> (real(r̄),)
+@adjoint conj(x::AbstractArray) = conj(x), r̄ -> (conj(r̄),)
+@adjoint imag(x::AbstractArray) = imag(x), ī -> (complex.(0, real.(ī)),)
+
 @adjoint function mean(xs::AbstractArray; dims = :)
   return mean(xs, dims=dims), Δ -> (_backmean(xs,Δ,dims),)
 end
@@ -446,6 +450,30 @@ end
   VF = factorize(V)
   Ā = (V * ((VF \ F̄' * V) .* X) / VF)'
   return (Ā,)
+end
+@adjoint function LinearAlgebra.eigen(A::LinearAlgebra.RealHermSymComplexHerm)
+  dU = eigen(A)
+  return dU, function (Δ)
+    d, U = dU
+    d̄, Ū = Δ
+    if Ū === nothing
+      P = Diagonal(d̄)
+    else
+      F = inv.(d' .- d)
+      P = F .* (U' * Ū)
+      if d̄ === nothing
+        P[diagind(P)] .= 0
+      else
+        P[diagind(P)] = d̄
+      end
+    end
+    return (U * P * U',)
+  end
+end
+
+@adjoint function LinearAlgebra.eigvals(A::LinearAlgebra.RealHermSymComplexHerm)
+  d, U = eigen(A)
+  return d, d̄ -> (U * Diagonal(d̄) * U',)
 end
 
 Zygote.@adjoint function LinearAlgebra.tr(x::AbstractMatrix)
