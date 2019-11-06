@@ -46,6 +46,9 @@ Random.seed!(0)
 @test gradtest(x -> sum(x, dims = (2, 3)), (3,4,5))
 @test gradtest(x -> sum(abs2, x), randn(4, 3, 2))
 @test gradtest(x -> sum(abs2, x; dims=1), randn(4, 3, 2))
+@test gradtest(x -> sum(x[i] for i in 1:length(x)), randn(10))
+@test_broken gradtest(x -> sum(i->x[i], 1:length(x)), randn(10)) # https://github.com/FluxML/Zygote.jl/issues/231
+
 @test_broken gradtest(x -> prod(x, dims = (2, 3)), (3,4,5))
 @test gradtest(x -> prod(x), (3,4,5))
 
@@ -982,4 +985,11 @@ end
   @test gradient(x -> findfirst(ismissing, x), [1, missing]) == (nothing,)
   @test gradient(x -> findlast(ismissing, x), [1, missing]) == (nothing,)
   @test gradient(x -> findall(ismissing, x)[1], [1, missing]) == (nothing,)
+end
+
+@testset "fastmath" begin
+  @test gradient(x -> begin @fastmath sin(x) end, 1) == gradient(x -> sin(x), 1)
+  @test gradient(x -> begin @fastmath tanh(x) end, 1) == gradient(x -> tanh(x), 1)
+  @test gradient((x, y) -> begin @fastmath x*y end, 3, 2) == gradient((x, y) -> x*y, 3, 2)
+  @test gradient(x -> begin @fastmath real(log(x)) end, 1 + 2im) == gradient(x -> real(log(x)), 1 + 2im)
 end
